@@ -1,0 +1,6 @@
+services:
+  mystockapp:
+    image: ${DOCKER_REGISTRY-}mystockapp
+    build:
+      context: .
+      dockerfile: MyStockApp/Dockerfile
