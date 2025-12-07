@@ -10,8 +10,8 @@
 
 ## Tasks
 
-- [ ] 1. 建立資料模型與資料庫結構
-- [ ] 1.1 建立 StockWatchlist Entity
+- [x] 1. 建立資料模型與資料庫結構
+- [x] 1.1 建立 StockWatchlist Entity
   - 定義 StockWatchlist 類別於 `/Data/Models/` 目錄
   - 設定屬性：Id, StockSymbol, StockName, Notes, CreatedAt, UpdatedAt
   - 加入 DataAnnotations 驗證屬性（Required, RegularExpression, MaxLength）
@@ -19,14 +19,14 @@
   - 設定 Nullable Reference Types（Notes 可為 null）
   - _Requirements: 5, 6_
 
-- [ ] 1.2 擴充 AppDbContext
+- [x] 1.2 擴充 AppDbContext
   - 於 AppDbContext.cs 新增 `DbSet<StockWatchlist> StockWatchlists` 屬性
   - 在 OnModelCreating 方法配置 StockSymbol 唯一索引
   - 配置 CreatedAt 預設值為 CURRENT_TIMESTAMP（新增時）
   - 實作 UpdatedAt 自動更新機制（於 SaveChangesAsync 前手動設定或使用 Interceptor）
   - _Requirements: 6_
 
-- [ ] 1.3 建立與執行 EF Core Migration
+- [x] 1.3 建立與執行 EF Core Migration
   - 執行 `dotnet ef migrations add AddStockWatchlist` 建立 Migration
   - 檢視產生的 Migration 檔案，確認資料表結構正確
   - 驗證唯一索引與預設值設定（StockSymbol UNIQUE, CreatedAt/UpdatedAt DEFAULT）
