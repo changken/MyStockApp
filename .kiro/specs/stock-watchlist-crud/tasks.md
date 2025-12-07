@@ -36,8 +36,8 @@
 
 ---
 
-- [ ] 2. 實作股票追蹤清單頁面基礎結構
-- [ ] 2.1 建立 StockWatchlist.razor 頁面骨架
+- [x] 2. 實作股票追蹤清單頁面基礎結構
+- [x] 2.1 建立 StockWatchlist.razor 頁面骨架
   - 建立 StockWatchlist.razor 檔案於 `/Components/Pages/` 目錄
   - 設定路由指令 `@page "/stocks"`
   - 注入 `IDbContextFactory<AppDbContext>` 依賴
@@ -45,7 +45,7 @@
   - 實作 OnInitializedAsync 方法載入股票清單
   - _Requirements: 2_
 
-- [ ] 2.2 實作清單顯示與載入指示器
+- [x] 2.2 實作清單顯示與載入指示器
   - 設計股票清單 UI 表格或卡片佈局，顯示股票代號、名稱、備註
   - 加入編輯與刪除按鈕於每筆股票項目
   - 實作載入指示器（使用 Bootstrap Spinner），依 isLoading 狀態顯示
