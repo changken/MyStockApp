@@ -1,0 +1,372 @@
+@page "/stocks"
+@using Microsoft.EntityFrameworkCore
+@using MyStockApp.Data
+@using MyStockApp.Data.Models
+@inject IDbContextFactory<AppDbContext> DbFactory
+
+<PageTitle>股票追蹤清單</PageTitle>
+
+<h1>股票追蹤清單</h1>
+
+@* 成功訊息 *@
+@if (!string.IsNullOrEmpty(successMessage))
+{
+    <div class="alert alert-success alert-dismissible fade show" role="alert">
+        @successMessage
+        <button type="button" class="btn-close" @onclick="ClearMessages" aria-label="Close"></button>
+    </div>
+}
+
+@* 錯誤訊息 *@
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        @errorMessage
+        <button type="button" class="btn-close" @onclick="ClearMessages" aria-label="Close"></button>
+    </div>
+}
+
+@* 載入指示器 *@
+@if (isLoading)
+{
+    <div class="d-flex justify-content-center my-4">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">載入中...</span>
+        </div>
+    </div>
+}
+else
+{
+    @* 新增/編輯表單 *@
+    @if (showForm)
+    {
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">@(isEditing ? "編輯股票" : "新增股票")</h5>
+            </div>
+            <div class="card-body">
+                <EditForm Model="currentStock" OnValidSubmit="HandleValidSubmit">
+                    <DataAnnotationsValidator />
+
+                    <div class="mb-3">
+                        <label for="stockSymbol" class="form-label">股票代號 <span class="text-danger">*</span></label>
+                        <InputText id="stockSymbol" class="form-control" @bind-Value="currentStock.StockSymbol"
+                                   disabled="@isEditing" placeholder="例如：2330" />
+                        <ValidationMessage For="@(() => currentStock.StockSymbol)" class="text-danger" />
+                        @if (isEditing)
+                        {
+                            <small class="text-muted">股票代號不可修改</small>
+                        }
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="stockName" class="form-label">股票名稱 <span class="text-danger">*</span></label>
+                        <InputText id="stockName" class="form-control" @bind-Value="currentStock.StockName"
+                                   placeholder="例如：台積電" />
+                        <ValidationMessage For="@(() => currentStock.StockName)" class="text-danger" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="notes" class="form-label">備註</label>
+                        <InputTextArea id="notes" class="form-control" @bind-Value="currentStock.Notes"
+                                       rows="3" placeholder="選填，最多 500 字元" />
+                        <ValidationMessage For="@(() => currentStock.Notes)" class="text-danger" />
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary" disabled="@isSaving">
+                            @if (isSaving)
+                            {
+                                <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                            }
+                            @(isEditing ? "更新" : "儲存")
+                        </button>
+                        <button type="button" class="btn btn-secondary" @onclick="CancelForm" disabled="@isSaving">
+                            取消
+                        </button>
+                    </div>
+                </EditForm>
+            </div>
+        </div>
+    }
+    else
+    {
+        @* 新增按鈕 *@
+        <div class="mb-3">
+            <button class="btn btn-primary" @onclick="ShowAddForm">
+                <i class="bi bi-plus-circle"></i> 新增股票
+            </button>
+        </div>
+    }
+
+    @* 股票清單 *@
+    @if (stocks == null || stocks.Count == 0)
+    {
+        <div class="alert alert-info" role="alert">
+            目前無追蹤股票
+        </div>
+    }
+    else
+    {
+        <table class="table table-striped table-hover">
+            <thead class="table-dark">
+                <tr>
+                    <th>股票代號</th>
+                    <th>股票名稱</th>
+                    <th>備註</th>
+                    <th>建立時間</th>
+                    <th style="width: 150px;">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var stock in stocks)
+                {
+                    <tr>
+                        <td>@stock.StockSymbol</td>
+                        <td>@stock.StockName</td>
+                        <td>@(string.IsNullOrEmpty(stock.Notes) ? "-" : stock.Notes)</td>
+                        <td>@stock.CreatedAt.ToLocalTime().ToString("yyyy/MM/dd HH:mm")</td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-primary me-1" @onclick="() => ShowEditForm(stock)" disabled="@showForm">
+                                編輯
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger" @onclick="() => ShowDeleteConfirmation(stock)" disabled="@showForm">
+                                刪除
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+}
+
+@* 刪除確認 Modal *@
+@if (showDeleteModal && stockToDelete != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">確認刪除</h5>
+                    <button type="button" class="btn-close" @onclick="CancelDelete" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p>確定要刪除以下股票嗎？</p>
+                    <p><strong>股票代號：</strong>@stockToDelete.StockSymbol</p>
+                    <p><strong>股票名稱：</strong>@stockToDelete.StockName</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CancelDelete" disabled="@isDeleting">
+                        取消
+                    </button>
+                    <button type="button" class="btn btn-danger" @onclick="ConfirmDelete" disabled="@isDeleting">
+                        @if (isDeleting)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                        }
+                        確認刪除
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    // 頁面狀態
+    private List<MyStockApp.Data.Models.StockWatchlist>? stocks;
+    private MyStockApp.Data.Models.StockWatchlist currentStock = new();
+    private bool isEditing = false;
+    private bool isLoading = true;
+    private bool showForm = false;
+    private bool isSaving = false;
+    private bool showDeleteModal = false;
+    private bool isDeleting = false;
+    private MyStockApp.Data.Models.StockWatchlist? stockToDelete;
+    private string? errorMessage;
+    private string? successMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadStocksAsync();
+    }
+
+    private async Task LoadStocksAsync()
+    {
+        isLoading = true;
+        try
+        {
+            using var context = await DbFactory.CreateDbContextAsync();
+            stocks = await context.StockWatchlists
+                .OrderByDescending(s => s.CreatedAt)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "載入資料失敗，請稍後再試";
+            Console.Error.WriteLine($"LoadStocksAsync error: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void ShowAddForm()
+    {
+        ClearMessages();
+        currentStock = new MyStockApp.Data.Models.StockWatchlist();
+        isEditing = false;
+        showForm = true;
+    }
+
+    private void ShowEditForm(MyStockApp.Data.Models.StockWatchlist stock)
+    {
+        ClearMessages();
+        currentStock = new MyStockApp.Data.Models.StockWatchlist
+        {
+            Id = stock.Id,
+            StockSymbol = stock.StockSymbol,
+            StockName = stock.StockName,
+            Notes = stock.Notes,
+            CreatedAt = stock.CreatedAt,
+            UpdatedAt = stock.UpdatedAt
+        };
+        isEditing = true;
+        showForm = true;
+    }
+
+    private async Task HandleValidSubmit()
+    {
+        ClearMessages();
+        isSaving = true;
+
+        try
+        {
+            using var context = await DbFactory.CreateDbContextAsync();
+
+            if (isEditing)
+            {
+                // 編輯模式：更新現有股票
+                var existingStock = await context.StockWatchlists.FindAsync(currentStock.Id);
+                if (existingStock != null)
+                {
+                    existingStock.StockName = currentStock.StockName;
+                    existingStock.Notes = currentStock.Notes;
+                    // UpdatedAt 會由 AppDbContext.SaveChangesAsync 自動設定
+                    await context.SaveChangesAsync();
+                    successMessage = "股票資訊已更新";
+                }
+                else
+                {
+                    errorMessage = "找不到要更新的股票";
+                }
+            }
+            else
+            {
+                // 新增模式：建立新股票
+                var newStock = new MyStockApp.Data.Models.StockWatchlist
+                {
+                    StockSymbol = currentStock.StockSymbol,
+                    StockName = currentStock.StockName,
+                    Notes = currentStock.Notes
+                    // CreatedAt 和 UpdatedAt 會由 AppDbContext.SaveChangesAsync 自動設定
+                };
+                context.StockWatchlists.Add(newStock);
+                await context.SaveChangesAsync();
+                successMessage = "股票已新增至追蹤清單";
+            }
+
+            showForm = false;
+            await LoadStocksAsync();
+        }
+        catch (DbUpdateException ex)
+        {
+            // 處理唯一約束違反
+            if (ex.InnerException?.Message.Contains("IX_StockWatchlists_StockSymbol") == true ||
+                ex.InnerException?.Message.Contains("unique") == true ||
+                ex.InnerException?.Message.Contains("duplicate") == true)
+            {
+                errorMessage = "股票代號已存在，請勿重複新增";
+            }
+            else
+            {
+                errorMessage = "儲存失敗，請稍後再試";
+                Console.Error.WriteLine($"DbUpdateException: {ex.Message}");
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "系統錯誤，請聯絡管理員";
+            Console.Error.WriteLine($"HandleValidSubmit error: {ex.Message}");
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private void CancelForm()
+    {
+        showForm = false;
+        currentStock = new MyStockApp.Data.Models.StockWatchlist();
+        isEditing = false;
+    }
+
+    private void ShowDeleteConfirmation(MyStockApp.Data.Models.StockWatchlist stock)
+    {
+        ClearMessages();
+        stockToDelete = stock;
+        showDeleteModal = true;
+    }
+
+    private async Task ConfirmDelete()
+    {
+        if (stockToDelete == null) return;
+
+        ClearMessages();
+        isDeleting = true;
+
+        try
+        {
+            using var context = await DbFactory.CreateDbContextAsync();
+            var stock = await context.StockWatchlists.FindAsync(stockToDelete.Id);
+            if (stock != null)
+            {
+                context.StockWatchlists.Remove(stock);
+                await context.SaveChangesAsync();
+                successMessage = $"已刪除股票：{stockToDelete.StockSymbol} {stockToDelete.StockName}";
+            }
+            else
+            {
+                errorMessage = "找不到要刪除的股票";
+            }
+
+            showDeleteModal = false;
+            stockToDelete = null;
+            await LoadStocksAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "刪除失敗，請稍後再試";
+            Console.Error.WriteLine($"ConfirmDelete error: {ex.Message}");
+        }
+        finally
+        {
+            isDeleting = false;
+        }
+    }
+
+    private void CancelDelete()
+    {
+        showDeleteModal = false;
+        stockToDelete = null;
+    }
+
+    private void ClearMessages()
+    {
+        errorMessage = null;
+        successMessage = null;
+    }
+}
