@@ -3,8 +3,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using MyStockApp.Components.Pages;
 using MyStockApp.Data;
-using MyStockApp.Data.Models;
+// using MyStockApp.Data.Models; // Removed to avoid ambiguity
 using Xunit;
+using StockWatchlistEntity = MyStockApp.Data.Models.StockWatchlist; // Alias for entity
 
 namespace MyStockApp.Tests;
 
@@ -26,7 +27,7 @@ public class StockWatchlistPageTests : TestContext
             new TestDbContextFactory(options));
 
         // Act
-        var cut = RenderComponent<StockWatchlistPage>();
+        var cut = RenderComponent<MyStockApp.Components.Pages.StockWatchlist>();
 
         // Assert
         Assert.Contains("股票追蹤清單", cut.Markup);
@@ -41,7 +42,7 @@ public class StockWatchlistPageTests : TestContext
             new TestDbContextFactory(options));
 
         // Act
-        var cut = RenderComponent<StockWatchlistPage>();
+        var cut = RenderComponent<MyStockApp.Components.Pages.StockWatchlist>();
         cut.WaitForState(() => !cut.Markup.Contains("載入中"), TimeSpan.FromSeconds(5));
 
         // Assert
@@ -58,7 +59,7 @@ public class StockWatchlistPageTests : TestContext
         using (var context = new AppDbContext(options))
         {
             context.StockWatchlists.AddRange(
-                new StockWatchlist
+                new StockWatchlistEntity
                 {
                     StockSymbol = "2330",
                     StockName = "台積電",
@@ -66,7 +67,7 @@ public class StockWatchlistPageTests : TestContext
                     CreatedAt = DateTime.UtcNow.AddDays(-1),
                     UpdatedAt = DateTime.UtcNow.AddDays(-1)
                 },
-                new StockWatchlist
+                new StockWatchlistEntity
                 {
                     StockSymbol = "2317",
                     StockName = "鴻海",
@@ -82,7 +83,7 @@ public class StockWatchlistPageTests : TestContext
             new TestDbContextFactory(options));
 
         // Act
-        var cut = RenderComponent<StockWatchlistPage>();
+        var cut = RenderComponent<MyStockApp.Components.Pages.StockWatchlist>();
         cut.WaitForState(() => !cut.Markup.Contains("載入中"), TimeSpan.FromSeconds(5));
 
         // Assert
@@ -105,14 +106,14 @@ public class StockWatchlistPageTests : TestContext
         using (var context = new AppDbContext(options))
         {
             context.StockWatchlists.AddRange(
-                new StockWatchlist
+                new StockWatchlistEntity
                 {
                     StockSymbol = "0050",
                     StockName = "元大台灣50",
                     CreatedAt = oldDate,
                     UpdatedAt = oldDate
                 },
-                new StockWatchlist
+                new StockWatchlistEntity
                 {
                     StockSymbol = "2330",
                     StockName = "台積電",
@@ -127,7 +128,7 @@ public class StockWatchlistPageTests : TestContext
             new TestDbContextFactory(options));
 
         // Act
-        var cut = RenderComponent<StockWatchlistPage>();
+        var cut = RenderComponent<MyStockApp.Components.Pages.StockWatchlist>();
         cut.WaitForState(() => !cut.Markup.Contains("載入中"), TimeSpan.FromSeconds(5));
 
         // Assert - 2330 應該出現在 0050 之前（最新在前）
@@ -146,7 +147,7 @@ public class StockWatchlistPageTests : TestContext
         // 預先填入測試資料
         using (var context = new AppDbContext(options))
         {
-            context.StockWatchlists.Add(new StockWatchlist
+            context.StockWatchlists.Add(new StockWatchlistEntity
             {
                 StockSymbol = "2330",
                 StockName = "台積電",
@@ -160,7 +161,7 @@ public class StockWatchlistPageTests : TestContext
             new TestDbContextFactory(options));
 
         // Act
-        var cut = RenderComponent<StockWatchlistPage>();
+        var cut = RenderComponent<MyStockApp.Components.Pages.StockWatchlist>();
         cut.WaitForState(() => !cut.Markup.Contains("載入中"), TimeSpan.FromSeconds(5));
 
         // Assert
