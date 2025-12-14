@@ -6,7 +6,7 @@
 
 | 類型 | 路徑 | 說明 |
 |------|------|------|
-| DbContext | `Data/AppDbContext.cs` | EF Core 資料庫上下文，含自動時間戳更新邏輯 |
+| DbContext | `Data/AppContext.cs` | EF Core 資料庫上下文（類別：AppDbContext），含自動時間戳更新邏輯 |
 | 資料模型 | `Data/Models/StockWatchlist.cs` | 股票追蹤清單實體，含驗證屬性 |
 | 頁面元件 | `Components/Pages/StockWatchlist.razor` | 股票追蹤 CRUD 頁面，可作為參考範本 |
 | 導航選單 | `Components/Layout/NavMenu.razor` | 需擴充交易相關導航項目 |

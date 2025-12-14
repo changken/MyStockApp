@@ -13,6 +13,8 @@
 - 精確計算交易成本（手續費、證券交易稅），符合台灣券商規則
 - 提供持股部位與損益即時計算
 - 支援交易紀錄查詢與 CSV 匯出
+- 實作限價單自動撮合機制
+- 提供股價變動時的即時損益更新
 
 ### Non-Goals
 - 即時股價串接（第三方 API 整合）— 本階段使用模擬/手動輸入
@@ -58,6 +60,7 @@ graph TB
         AuditService[Audit Service]
         CsvExportService[CSV Export Service]
         MarketHoursService[Market Hours Service]
+        LimitOrderMatcher[Limit Order Matcher (Hosted Service)]
     end
 
     subgraph Data
@@ -88,6 +91,8 @@ graph TB
     PortfolioService --> AppDbContext
     StockService --> AppDbContext
     AuditService --> AppDbContext
+    LimitOrderMatcher --> TradingService
+    LimitOrderMatcher --> StockService
 
     AppDbContext --> Stock
     AppDbContext --> Order
@@ -102,7 +107,7 @@ graph TB
 - **Selected pattern**: Layered Architecture + Service Interfaces（分層架構搭配服務介面）
 - **Domain boundaries**: Trading Domain（訂單/成交）、Stock Domain（股票資料）、Portfolio Domain（持股）
 - **Existing patterns preserved**: IDbContextFactory 模式、Data Annotations 驗證
-- **New components rationale**: 服務層封裝複雜業務邏輯，提升可測試性
+- **New components rationale**: 服務層封裝複雜業務邏輯，提升可測試性；Hosted Service 處理背景工作
 - **Steering compliance**: 遵循 Blazor Server 架構、C# 命名慣例、強型別設計
 
 ### Technology Stack
@@ -112,6 +117,7 @@ graph TB
 | Frontend | Blazor Server (.NET 10) | 互動式交易頁面、即時更新 | 現有技術延續 |
 | Backend | ASP.NET Core 10.0 | 服務層、依賴注入 | 新增 Services 目錄 |
 | Data | PostgreSQL + EF Core 10.0 | 訂單/交易/持股資料持久化 | 擴充 AppDbContext |
+| Background | HostedService | 限價單撮合 | 新增 BackgroundService |
 | CSV Export | CsvHelper 31.x | 交易紀錄匯出 | 新增 NuGet 套件 |
 | JS Interop | 自訂 fileDownload.js | 觸發瀏覽器檔案下載 | 新增 wwwroot/js |
 
@@ -140,20 +146,38 @@ sequenceDiagram
 
     TradingPage->>TradingService: 建立訂單
     TradingService->>TradingService: 驗證訂單
-    TradingService->>AppDbContext: 儲存 Order
-    TradingService->>TradingService: 模擬成交
+    TradingService->>AppDbContext: 儲存 Order (Transaction Start)
+    TradingService->>TradingService: 模擬成交 (若為市價單)
     TradingService->>TradingCostService: 計算實際成本
     TradingService->>AppDbContext: 儲存 Trade
-    TradingService->>PortfolioService: 更新持股
+    TradingService->>PortfolioService: 更新持股 (Pass Context)
     PortfolioService->>AppDbContext: 更新 Portfolio
+    TradingService->>AppDbContext: Commit Transaction
     TradingService-->>TradingPage: 下單結果
     TradingPage-->>User: 顯示成功訊息
 ```
 
 **Key Decisions**:
-- 市價單立即模擬成交，限價單保持待成交狀態
-- 成本計算在下單前預估、成交後精算
-- 休市時段允許下單但標記為「待處理」
+- 交易時段內：市價單立即模擬成交；休市時段：仍可建立訂單，但狀態維持 Pending 並提示「開盤後處理」
+- 限價單：建立後維持 Pending，由 Limit Order Matcher 在背景處理
+- 交易一致性：TradingService 控制交易邊界，將 DbContext 傳遞給 PortfolioService 以確保原子性
+
+### 限價單撮合流程
+
+```mermaid
+sequenceDiagram
+    participant StockService
+    participant LimitOrderMatcher
+    participant TradingService
+
+    StockService->>LimitOrderMatcher: 觸發股價更新事件 (OnPriceUpdated)
+    LimitOrderMatcher->>TradingService: 查詢該股票 Pending 限價單
+    TradingService-->>LimitOrderMatcher: 訂單清單
+    loop 每一筆符合條件的訂單
+        LimitOrderMatcher->>TradingService: 執行成交 (ExecuteMatchAsync)
+        TradingService->>TradingService: 建立 Trade & 更新 Portfolio
+    end
+```
 
 ### CSV 匯出流程
 
@@ -181,7 +205,7 @@ sequenceDiagram
 | 1.1, 1.2 | 建立買入/賣出訂單 | TradingPage, TradingService | ITradingService.CreateOrderAsync | 下單流程 |
 | 1.3, 1.4 | 數量驗證、持股檢查 | TradingService | ITradingService.ValidateOrder | 下單流程 |
 | 1.5 | 處理中狀態顯示 | TradingPage | - | - |
-| 2.1, 2.2 | 市價單/限價單支援 | Order Entity, TradingPage | OrderType Enum | 下單流程 |
+| 2.1, 2.2 | 市價單/限價單支援 | Order Entity, TradingPage, LimitOrderMatcher | OrderType Enum | 下單流程, 撮合流程 |
 | 2.3, 2.4, 2.5 | 限價單價格欄位邏輯 | TradingPage | - | - |
 | 3.1 | 訂單清單顯示 | OrdersPage, TradingService | ITradingService.GetOrdersAsync | - |
 | 3.2, 3.3 | 取消訂單、狀態限制 | TradingService | ITradingService.CancelOrderAsync | - |
@@ -193,7 +217,7 @@ sequenceDiagram
 | 4.5 | 排序 | TradingService | - | - |
 | 5.1 | 持股部位顯示 | PortfolioPage, PortfolioService | IPortfolioService.GetPortfolioAsync | - |
 | 5.2, 5.3 | 損益/報酬率計算 | PortfolioService, TradingCostService | IPortfolioService.CalculatePnL | - |
-| 5.4 | 股價更新時重算 | PortfolioPage | - | - |
+| 5.4 | 股價更新時重算 | PortfolioPage, StockService | IStockService.OnPriceUpdated | - |
 | 5.5 | 總市值/總損益 | PortfolioPage, PortfolioService | - | - |
 | 6.1 | 股票代號驗證 | TradingService, StockService | IStockService.GetStockAsync | 下單流程 |
 | 6.2 | 金額上限警告 | TradingService, UserSettings | ITradingService.ValidateOrder | - |
@@ -215,6 +239,7 @@ sequenceDiagram
 | AuditService | Audit/Service | 稽核日誌記錄 | 6.3 | - | Service |
 | CsvExportService | Export/Service | CSV 檔案產生與下載 | 4.4 | JSInterop (P0) | Service |
 | MarketHoursService | Trading/Service | 台股開收盤時段判斷 | 6.4 | - | Service |
+| LimitOrderMatcher | Trading/Background | 限價單撮合 | 2.2 | TradingService (P0), StockService (P0) | HostedService |
 | TradingPage | Trading/UI | 股票下單介面 | 1.1-1.5, 2.1-2.5, 6.4, 7.6 | TradingService, TradingCostService | - |
 | OrdersPage | Trading/UI | 訂單管理介面 | 3.1-3.5 | TradingService | - |
 | PortfolioPage | Portfolio/UI | 持股部位介面 | 5.1-5.5 | PortfolioService | - |
@@ -234,9 +259,11 @@ sequenceDiagram
 - 管理訂單狀態流轉（待成交 → 已成交/已取消）
 - 記錄成交明細與計算實際成本
 - 交易聚合根，確保訂單與成交的交易一致性
+- **交易一致性**：負責建立 DbContext Transaction，並將 Context 傳遞給 PortfolioService 以確保原子性。
 
 **Dependencies**
 - Inbound: TradingPage, OrdersPage, TradeHistoryPage — 頁面呼叫 (P0)
+- Inbound: LimitOrderMatcher — 撮合呼叫 (P0)
 - Outbound: TradingCostService — 成本計算 (P0)
 - Outbound: PortfolioService — 持股更新 (P0)
 - Outbound: StockService — 股票驗證與報價 (P0)
@@ -255,6 +282,9 @@ public interface ITradingService
     Task<IReadOnlyList<Order>> GetOrdersAsync(OrderFilter? filter = null);
     Task<IReadOnlyList<Trade>> GetTradesAsync(TradeFilter? filter = null);
     Task<Order?> GetOrderByIdAsync(int orderId);
+    
+    // 供 LimitOrderMatcher 呼叫的內部邏輯
+    Task<Result<Trade, TradingError>> ExecuteMatchAsync(int orderId, decimal matchPrice);
 }
 
 public record CreateOrderRequest(
@@ -423,7 +453,8 @@ public interface IPortfolioService
 {
     Task<IReadOnlyList<PortfolioItem>> GetPortfolioAsync();
     Task<PortfolioSummary> GetPortfolioSummaryAsync();
-    Task UpdatePortfolioAsync(int stockId, int quantityChange, decimal price, TradeSide side, decimal commission);
+    // 支援傳入共用 DbContext 以參與交易
+    Task UpdatePortfolioAsync(int stockId, int quantityChange, decimal price, TradeSide side, decimal commission, AppDbContext? sharedContext = null);
 }
 
 public record PortfolioItem(
@@ -463,9 +494,11 @@ public record PortfolioSummary(
 - 報價資料更新與查詢
 - 歷史價格儲存與統計
 - 股票搜尋（代號/名稱模糊查詢）
+- **即時通知**：發布股價更新事件
 
 **Dependencies**
 - Inbound: TradingService, PortfolioService, StockSearchPage — 股票查詢 (P0)
+- Inbound: LimitOrderMatcher — 訂閱股價更新 (P0)
 - External: IDbContextFactory — 資料存取 (P0)
 
 **Contracts**: Service [x]
@@ -480,6 +513,9 @@ public interface IStockService
     Task<IReadOnlyList<StockPriceHistory>> GetPriceHistoryAsync(int stockId, DateOnly fromDate, DateOnly toDate);
     Task<PriceStatistics> CalculatePriceStatisticsAsync(int stockId, DateOnly fromDate, DateOnly toDate);
     Task UpdateStockQuoteAsync(int stockId, StockQuote quote);
+    
+    // 股價更新事件
+    event Action<int, decimal>? OnPriceUpdated;
 }
 
 public record StockQuote(
@@ -561,7 +597,7 @@ public interface IAuditService
 ```mermaid
 erDiagram
     Stock ||--o{ Order : has
-    Stock ||--o{ Portfolio : in
+    Stock ||--o| Portfolio : in
     Stock ||--o{ StockPriceHistory : records
     Order ||--o{ Trade : generates
 
@@ -649,12 +685,13 @@ erDiagram
 
 **Entities & Relationships**:
 - Stock (1) → Order (N): 一檔股票可有多筆訂單
-- Stock (1) → Portfolio (1): 每檔股票最多一筆持股記錄
+- Stock (1) → Portfolio (0..1): 每檔股票最多一筆持股記錄（未持有則無）
 - Stock (1) → StockPriceHistory (N): 每檔股票有多筆歷史價格
 - Order (1) → Trade (N): 一筆訂單可能分批成交
 
 **Constraints**:
 - Stock.Symbol: Unique
+- Portfolio.StockId: Unique（每檔股票最多一筆持股記錄）
 - Order.Status 流轉: Pending → Executed | Cancelled
 - Portfolio.Quantity >= 0
 
@@ -667,7 +704,7 @@ erDiagram
 | Stocks | Id (PK), Symbol (UK) | IX_Symbol | 股票基本資料 |
 | Orders | Id (PK), StockId (FK) | IX_StockId_Status, IX_CreatedAt | 訂單記錄 |
 | Trades | Id (PK), OrderId (FK) | IX_ExecutedAt, IX_StockSymbol | 成交記錄 |
-| Portfolios | Id (PK), StockId (FK, UK) | - | 持股部位 |
+| Portfolios | Id (PK), StockId (FK, UK) | IX_Portfolios_StockId (Unique) | 持股部位 |
 | StockPriceHistories | Id (PK), StockId (FK) | IX_StockId_Date | 歷史價格 |
 | UserSettings | Id (PK) | - | 使用者設定 |
 | AuditLogs | Id (PK) | IX_CreatedAt, IX_EntityType | 稽核日誌 |
@@ -706,9 +743,10 @@ erDiagram
 - PortfolioService: 平均成本計算（買入/賣出）、報酬率計算
 - MarketHoursService: 開盤/休市/假日判斷
 - Order 驗證邏輯: 數量驗證、限價單驗證
+- LimitOrderMatcher: 測試價格觸發邏輯
 
 ### Integration Tests
-- TradingService + AppDbContext: 完整下單流程
+- TradingService + AppDbContext: 完整下單流程（含 Transaction 測試）
 - PortfolioService + TradingService: 持股更新流程
 - CsvExportService: CSV 產生內容驗證
 
@@ -743,4 +781,6 @@ builder.Services.AddScoped<IStockService, StockService>();
 builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<ICsvExportService, CsvExportService>();
 builder.Services.AddSingleton<IMarketHoursService, MarketHoursService>();
+// Hosted Services
+builder.Services.AddHostedService<LimitOrderMatcher>();
 ```
