@@ -41,6 +41,8 @@ builder.Services.AddScoped(sp => sp.GetRequiredService<IDbContextFactory<AppDbCo
 builder.Services.AddScoped<ITradingCostService, TradingCostService>();
 builder.Services.AddScoped<IStockService, StockService>();
 builder.Services.AddScoped<IAuditService, AuditService>();
+builder.Services.AddScoped<IPortfolioService, PortfolioService>();
+builder.Services.AddScoped<ITradingService, TradingService>();
 builder.Services.AddSingleton<IMarketHoursService, MarketHoursService>();
 
 // 如果有 WASM/Auto 模式，視需求再加對應服務
