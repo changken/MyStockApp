@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using MyStockApp.Components;
 using MyStockApp.Data;
+using MyStockApp.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -35,6 +36,12 @@ builder.Services.AddDbContextFactory<AppDbContext>(options => options.UseNpgsql(
 
 // 若你專案中仍有直接注入 AppDbContext 的舊程式，下面這行會把 factory 產出的實例以 Scoped 提供（可選）
 builder.Services.AddScoped(sp => sp.GetRequiredService<IDbContextFactory<AppDbContext>>().CreateDbContext());
+
+// Trading Services
+builder.Services.AddScoped<ITradingCostService, TradingCostService>();
+builder.Services.AddScoped<IStockService, StockService>();
+builder.Services.AddScoped<IAuditService, AuditService>();
+builder.Services.AddSingleton<IMarketHoursService, MarketHoursService>();
 
 // 如果有 WASM/Auto 模式，視需求再加對應服務
 var app = builder.Build();
