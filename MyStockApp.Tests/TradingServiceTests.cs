@@ -491,13 +491,13 @@ public class TradingServiceTests
 
     #region Helper Methods
 
-    private async Task<Stock> SeedStock()
+    private async Task<Stock> SeedStock(string symbol = "2330", string name = "台積電")
     {
         using var context = _factory.CreateDbContext();
         var stock = new Stock
         {
-            Symbol = "2330",
-            Name = "台積電",
+            Symbol = symbol,
+            Name = name,
             Market = MarketType.Listed,
             Industry = "半導體",
             CurrentPrice = 100m,
@@ -564,6 +564,286 @@ public class TradingServiceTests
         await context.SaveChangesAsync();
         return order;
     }
+
+    #endregion
+
+    #region Task 8.1: 交易紀錄查詢與篩選
+
+    [Fact]
+    public async Task GetTradesAsync_WithNoFilter_ReturnsAllTrades()
+    {
+        // Arrange
+        var stock = await SeedStock();
+        await SeedTradesForFiltering(stock);
+
+        // Act
+        var result = await _tradingService.GetTradesAsync();
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.True(result.Count >= 3); // 至少包含我們建立的 3 筆
+    }
+
+    [Fact]
+    public async Task GetTradesAsync_FilterByStockSymbol_ReturnsMatchingTrades()
+    {
+        // Arrange
+        var stock1 = await SeedStock("2330", "台積電");
+        var stock2 = await SeedStock("2317", "鴻海");
+
+        await SeedTradeForStock(stock1.Id, stock1.Symbol);
+        await SeedTradeForStock(stock2.Id, stock2.Symbol);
+
+        // Act
+        var filter = new TradeFilter(StockSymbol: "2330");
+        var result = await _tradingService.GetTradesAsync(filter);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.All(result, t => Assert.Equal("2330", t.StockSymbol));
+    }
+
+    [Fact]
+    public async Task GetTradesAsync_FilterByDateRange_ReturnsMatchingTrades()
+    {
+        // Arrange
+        var stock = await SeedStock();
+        var now = DateTime.UtcNow;
+
+        // 建立不同時間的交易紀錄
+        await SeedTradeWithDate(stock.Id, stock.Symbol, now.AddDays(-10));
+        await SeedTradeWithDate(stock.Id, stock.Symbol, now.AddDays(-5));
+        await SeedTradeWithDate(stock.Id, stock.Symbol, now.AddDays(-1));
+
+        // Act - 查詢最近 7 天
+        var filter = new TradeFilter(FromDate: now.AddDays(-7));
+        var result = await _tradingService.GetTradesAsync(filter);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.True(result.Count >= 2); // 應該包含 -5 天和 -1 天的交易
+        Assert.All(result, t => Assert.True(t.ExecutedAt >= now.AddDays(-7)));
+    }
+
+    [Fact]
+    public async Task GetTradesAsync_FilterByFromAndToDate_ReturnsMatchingTrades()
+    {
+        // Arrange
+        var stock = await SeedStock();
+        var now = DateTime.UtcNow;
+
+        await SeedTradeWithDate(stock.Id, stock.Symbol, now.AddDays(-15));
+        await SeedTradeWithDate(stock.Id, stock.Symbol, now.AddDays(-10));
+        await SeedTradeWithDate(stock.Id, stock.Symbol, now.AddDays(-5));
+        await SeedTradeWithDate(stock.Id, stock.Symbol, now.AddDays(-1));
+
+        // Act - 查詢 12 天前到 4 天前
+        var filter = new TradeFilter(
+            FromDate: now.AddDays(-12),
+            ToDate: now.AddDays(-4)
+        );
+        var result = await _tradingService.GetTradesAsync(filter);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.True(result.Count >= 2); // 應該包含 -10 天和 -5 天的交易
+        Assert.All(result, t =>
+        {
+            Assert.True(t.ExecutedAt >= now.AddDays(-12));
+            Assert.True(t.ExecutedAt <= now.AddDays(-4));
+        });
+    }
+
+    [Fact]
+    public async Task GetTradesAsync_OrderedByExecutedAtDescending()
+    {
+        // Arrange
+        var stock = await SeedStock();
+        var now = DateTime.UtcNow;
+
+        await SeedTradeWithDate(stock.Id, stock.Symbol, now.AddDays(-10));
+        await SeedTradeWithDate(stock.Id, stock.Symbol, now.AddDays(-5));
+        await SeedTradeWithDate(stock.Id, stock.Symbol, now.AddDays(-1));
+
+        // Act
+        var result = await _tradingService.GetTradesAsync();
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.True(result.Count >= 3);
+
+        // 驗證按照 ExecutedAt 降序排列（最新在前）
+        for (int i = 0; i < result.Count - 1; i++)
+        {
+            Assert.True(result[i].ExecutedAt >= result[i + 1].ExecutedAt,
+                $"Trade at index {i} should have ExecutedAt >= Trade at index {i + 1}");
+        }
+    }
+
+    [Fact]
+    public async Task GetTradesAsync_CombinedFilters_ReturnsMatchingTrades()
+    {
+        // Arrange
+        var stock1 = await SeedStock("2330", "台積電");
+        var stock2 = await SeedStock("2317", "鴻海");
+        var now = DateTime.UtcNow;
+
+        await SeedTradeWithDate(stock1.Id, stock1.Symbol, now.AddDays(-10));
+        await SeedTradeWithDate(stock1.Id, stock1.Symbol, now.AddDays(-5));
+        await SeedTradeWithDate(stock2.Id, stock2.Symbol, now.AddDays(-5));
+
+        // Act - 組合條件：特定股票 + 日期範圍
+        var filter = new TradeFilter(
+            StockSymbol: "2330",
+            FromDate: now.AddDays(-7)
+        );
+        var result = await _tradingService.GetTradesAsync(filter);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.True(result.Count >= 1); // 應該只有 2330 在 7 天內的交易
+        Assert.All(result, t =>
+        {
+            Assert.Equal("2330", t.StockSymbol);
+            Assert.True(t.ExecutedAt >= now.AddDays(-7));
+        });
+    }
+
+    [Fact]
+    public async Task GetTradesAsync_IncludesOrderAndStockDetails()
+    {
+        // Arrange
+        var stock = await SeedStock("2330", "台積電");
+        await SeedTradeForStock(stock.Id, stock.Symbol);
+
+        // Act
+        var result = await _tradingService.GetTradesAsync();
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.NotEmpty(result);
+
+        var trade = result.First(t => t.StockSymbol == "2330");
+        Assert.NotNull(trade.Order);
+        Assert.NotNull(trade.Order.Stock);
+        Assert.Equal("2330", trade.Order.Stock.Symbol);
+        Assert.Equal("台積電", trade.Order.Stock.Name);
+    }
+
+    #endregion
+
+    #region Helper Methods for Task 8
+
+    private async Task SeedTradesForFiltering(Stock stock)
+    {
+        using var context = _factory.CreateDbContext();
+        var now = DateTime.UtcNow;
+
+        for (int i = 0; i < 3; i++)
+        {
+            var order = new Order
+            {
+                StockId = stock.Id,
+                Side = OrderSide.Buy,
+                Type = OrderType.Market,
+                Quantity = 100,
+                Price = 500m,
+                Status = OrderStatus.Executed,
+                CreatedAt = now.AddMinutes(-i * 10),
+                UpdatedAt = now.AddMinutes(-i * 10)
+            };
+            context.Orders.Add(order);
+            await context.SaveChangesAsync();
+
+            var trade = new Trade
+            {
+                OrderId = order.Id,
+                StockSymbol = stock.Symbol,
+                Side = TradeSide.Buy,
+                Quantity = 100,
+                ExecutedPrice = 500m,
+                TotalAmount = 50000m,
+                Commission = 85.5m,
+                TransactionTax = 0m,
+                NetAmount = 50085.5m,
+                ExecutedAt = now.AddMinutes(-i * 10)
+            };
+            context.Trades.Add(trade);
+        }
+        await context.SaveChangesAsync();
+    }
+
+    private async Task SeedTradeForStock(int stockId, string stockSymbol)
+    {
+        using var context = _factory.CreateDbContext();
+
+        var order = new Order
+        {
+            StockId = stockId,
+            Side = OrderSide.Buy,
+            Type = OrderType.Market,
+            Quantity = 100,
+            Price = 500m,
+            Status = OrderStatus.Executed,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        context.Orders.Add(order);
+        await context.SaveChangesAsync();
+
+        var trade = new Trade
+        {
+            OrderId = order.Id,
+            StockSymbol = stockSymbol,
+            Side = TradeSide.Buy,
+            Quantity = 100,
+            ExecutedPrice = 500m,
+            TotalAmount = 50000m,
+            Commission = 85.5m,
+            TransactionTax = 0m,
+            NetAmount = 50085.5m,
+            ExecutedAt = DateTime.UtcNow
+        };
+        context.Trades.Add(trade);
+        await context.SaveChangesAsync();
+    }
+
+    private async Task SeedTradeWithDate(int stockId, string stockSymbol, DateTime executedAt)
+    {
+        using var context = _factory.CreateDbContext();
+
+        var order = new Order
+        {
+            StockId = stockId,
+            Side = OrderSide.Buy,
+            Type = OrderType.Market,
+            Quantity = 100,
+            Price = 500m,
+            Status = OrderStatus.Executed,
+            CreatedAt = executedAt,
+            UpdatedAt = executedAt
+        };
+        context.Orders.Add(order);
+        await context.SaveChangesAsync();
+
+        var trade = new Trade
+        {
+            OrderId = order.Id,
+            StockSymbol = stockSymbol,
+            Side = TradeSide.Buy,
+            Quantity = 100,
+            ExecutedPrice = 500m,
+            TotalAmount = 50000m,
+            Commission = 85.5m,
+            TransactionTax = 0m,
+            NetAmount = 50085.5m,
+            ExecutedAt = executedAt
+        };
+        context.Trades.Add(trade);
+        await context.SaveChangesAsync();
+    }
+
+    #endregion
 
     private class TestDbContextFactory : IDbContextFactory<AppDbContext>
     {
