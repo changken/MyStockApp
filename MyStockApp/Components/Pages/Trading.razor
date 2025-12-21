@@ -1,0 +1,480 @@
+@page "/trading"
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using MyStockApp.Data
+@using MyStockApp.Data.Models
+@using MyStockApp.Services
+@inject IStockService StockService
+@inject ITradingService TradingService
+@inject ITradingCostService CostService
+@inject IMarketHoursService MarketHoursService
+
+<PageTitle>交易下單</PageTitle>
+
+<h1>交易下單</h1>
+
+@* 成功訊息 *@
+@if (!string.IsNullOrEmpty(successMessage))
+{
+    <div class="alert alert-success alert-dismissible fade show" role="alert">
+        @successMessage
+        <button type="button" class="btn-close" @onclick="ClearMessages" aria-label="Close"></button>
+    </div>
+}
+
+@* 錯誤訊息 *@
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        @errorMessage
+        <button type="button" class="btn-close" @onclick="ClearMessages" aria-label="Close"></button>
+    </div>
+}
+
+@* 休市時段提示 *@
+@if (!isMarketOpen)
+{
+    <div class="alert alert-warning" role="alert">
+        <i class="bi bi-exclamation-triangle-fill"></i>
+        目前為休市時段,訂單將於開盤後處理
+    </div>
+}
+
+@* Task 10.1: 股票搜尋與選擇介面 *@
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0">搜尋股票</h5>
+    </div>
+    <div class="card-body">
+        <div class="row g-3">
+            <div class="col-md-8">
+                <label for="searchKeyword" class="form-label">股票代號或名稱</label>
+                <input type="text" id="searchKeyword" class="form-control"
+                       @bind="searchKeyword" @bind:event="oninput"
+                       placeholder="輸入股票代號或名稱關鍵字" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">&nbsp;</label>
+                <button type="button" class="btn btn-primary w-100" @onclick="SearchStocks" disabled="@isSearching">
+                    @if (isSearching)
+                    {
+                        <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                    }
+                    搜尋
+                </button>
+            </div>
+        </div>
+
+        @* 搜尋結果清單 *@
+        @if (searchResults != null && searchResults.Count > 0)
+        {
+            <div class="mt-3">
+                <h6>搜尋結果</h6>
+                <div class="list-group">
+                    @foreach (var stock in searchResults)
+                    {
+                        <button type="button"
+                                class="list-group-item list-group-item-action @(selectedStock?.Id == stock.Id ? "active" : "")"
+                                @onclick="() => SelectStock(stock)">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <strong>@stock.Symbol</strong> @stock.Name
+                                </div>
+                                <div>
+                                    <span class="badge bg-secondary">@GetMarketTypeName(stock.Market)</span>
+                                    @if (stock.CurrentPrice > 0)
+                                    {
+                                        <span class="badge bg-info ms-1">$@stock.CurrentPrice.ToString("N2")</span>
+                                    }
+                                </div>
+                            </div>
+                        </button>
+                    }
+                </div>
+            </div>
+        }
+        else if (searchResults != null && searchResults.Count == 0 && !string.IsNullOrWhiteSpace(searchKeyword))
+        {
+            <div class="alert alert-info mt-3" role="alert">
+                查無符合條件的股票
+            </div>
+        }
+    </div>
+</div>
+
+@* 選中股票的報價資訊 *@
+@if (selectedStock != null)
+{
+    <div class="card mb-4">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0">@selectedStock.Symbol - @selectedStock.Name</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-3">
+                    <div class="text-center">
+                        <small class="text-muted">當前價</small>
+                        <h3 class="text-primary mb-0">@selectedStock.CurrentPrice.ToString("N2")</h3>
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <small class="text-muted">開盤</small>
+                    <div>@selectedStock.OpenPrice.ToString("N2")</div>
+                </div>
+                <div class="col-md-2">
+                    <small class="text-muted">最高</small>
+                    <div class="text-danger">@selectedStock.HighPrice.ToString("N2")</div>
+                </div>
+                <div class="col-md-2">
+                    <small class="text-muted">最低</small>
+                    <div class="text-success">@selectedStock.LowPrice.ToString("N2")</div>
+                </div>
+                <div class="col-md-3">
+                    <small class="text-muted">成交量</small>
+                    <div>@selectedStock.Volume.ToString("N0")</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @* Task 10.2: 下單表單介面 *@
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0">下單資訊</h5>
+        </div>
+        <div class="card-body">
+            <EditForm Model="orderRequest" OnValidSubmit="HandleOrderSubmit">
+                <DataAnnotationsValidator />
+
+                <div class="row g-3 mb-3">
+                    @* 買入/賣出選擇 *@
+                    <div class="col-md-6">
+                        <label class="form-label">交易方向 <span class="text-danger">*</span></label>
+                        <div class="btn-group w-100" role="group">
+                            <input type="radio" class="btn-check" name="orderSide" id="buyRadio"
+                                   checked="@(orderSide == OrderSide.Buy)"
+                                   @onchange="() => { orderSide = OrderSide.Buy; CalculateCostEstimation(); }" />
+                            <label class="btn btn-outline-success" for="buyRadio">
+                                <i class="bi bi-arrow-up-circle"></i> 買入
+                            </label>
+
+                            <input type="radio" class="btn-check" name="orderSide" id="sellRadio"
+                                   checked="@(orderSide == OrderSide.Sell)"
+                                   @onchange="() => { orderSide = OrderSide.Sell; CalculateCostEstimation(); }" />
+                            <label class="btn btn-outline-danger" for="sellRadio">
+                                <i class="bi bi-arrow-down-circle"></i> 賣出
+                            </label>
+                        </div>
+                    </div>
+
+                    @* 市價單/限價單選擇 *@
+                    <div class="col-md-6">
+                        <label class="form-label">訂單類型 <span class="text-danger">*</span></label>
+                        <div class="btn-group w-100" role="group">
+                            <input type="radio" class="btn-check" name="orderType" id="marketRadio"
+                                   checked="@(orderType == OrderType.Market)"
+                                   @onchange="() => { orderType = OrderType.Market; limitPrice = null; CalculateCostEstimation(); }" />
+                            <label class="btn btn-outline-primary" for="marketRadio">
+                                市價單
+                            </label>
+
+                            <input type="radio" class="btn-check" name="orderType" id="limitRadio"
+                                   checked="@(orderType == OrderType.Limit)"
+                                   @onchange="() => { orderType = OrderType.Limit; limitPrice = selectedStock.CurrentPrice; CalculateCostEstimation(); }" />
+                            <label class="btn btn-outline-primary" for="limitRadio">
+                                限價單
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row g-3 mb-3">
+                    @* 數量輸入 *@
+                    <div class="col-md-6">
+                        <label for="quantity" class="form-label">數量(股) <span class="text-danger">*</span></label>
+                        <input type="number" id="quantity" class="form-control"
+                               @bind="quantity" @bind:event="oninput"
+                               @onchange="CalculateCostEstimation"
+                               min="1" step="1" placeholder="請輸入交易數量" />
+                        <small class="text-muted">台股以 1 股為單位</small>
+                    </div>
+
+                    @* 限價輸入(僅限價單顯示) *@
+                    <div class="col-md-6">
+                        <label for="limitPrice" class="form-label">
+                            價格 @(orderType == OrderType.Limit ? "*" : "(市價單無需填寫)")
+                        </label>
+                        <input type="number" id="limitPrice" class="form-control"
+                               @bind="limitPrice" @bind:event="oninput"
+                               @onchange="CalculateCostEstimation"
+                               disabled="@(orderType == OrderType.Market)"
+                               min="0.01" step="0.01" placeholder="@(orderType == OrderType.Market ? "將以市價成交" : "請輸入限價")" />
+                        @if (orderType == OrderType.Limit)
+                        {
+                            <small class="text-muted">目前市價: @selectedStock.CurrentPrice.ToString("N2")</small>
+                        }
+                    </div>
+                </div>
+
+                @* Task 10.3: 交易成本預估顯示 *@
+                @if (costEstimation != null && quantity > 0)
+                {
+                    <div class="card bg-light mb-3">
+                        <div class="card-body">
+                            <h6 class="card-title">成本預估</h6>
+                            <div class="row">
+                                <div class="col-md-3">
+                                    <small class="text-muted">成交金額</small>
+                                    <div class="fw-bold">$@estimatedAmount.ToString("N2")</div>
+                                </div>
+                                <div class="col-md-3">
+                                    <small class="text-muted">手續費 (6折)</small>
+                                    <div class="text-warning">$@costEstimation.Commission.ToString("N2")</div>
+                                </div>
+                                <div class="col-md-3">
+                                    <small class="text-muted">交易稅</small>
+                                    <div class="text-info">$@costEstimation.TransactionTax.ToString("N2")</div>
+                                </div>
+                                <div class="col-md-3">
+                                    <small class="text-muted">總成本</small>
+                                    <div class="fw-bold text-danger">$@costEstimation.TotalCost.ToString("N2")</div>
+                                </div>
+                            </div>
+                            <hr />
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <small class="text-muted">@(orderSide == OrderSide.Buy ? "買入成本" : "賣出所得")</small>
+                                    <h5 class="mb-0 @(orderSide == OrderSide.Buy ? "text-danger" : "text-success")">
+                                        $@totalCostWithFees.ToString("N2")
+                                    </h5>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+
+                @* Task 10.4: 下單確認與提交 *@
+                <div class="d-flex gap-2 justify-content-end">
+                    <button type="button" class="btn btn-secondary" @onclick="ClearOrder">
+                        清除
+                    </button>
+                    <button type="submit" class="btn btn-lg @(orderSide == OrderSide.Buy ? "btn-success" : "btn-danger")"
+                            disabled="@(isSubmitting || !IsOrderValid())">
+                        @if (isSubmitting)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                        }
+                        <i class="bi @(orderSide == OrderSide.Buy ? "bi-cart-plus" : "bi-cart-dash")"></i>
+                        確認下單
+                    </button>
+                </div>
+            </EditForm>
+        </div>
+    </div>
+}
+
+@code {
+    // Task 10.1: 股票搜尋狀態
+    private string? searchKeyword;
+    private List<Stock>? searchResults;
+    private Stock? selectedStock;
+    private bool isSearching = false;
+
+    // Task 10.2: 下單表單狀態
+    private OrderSide orderSide = OrderSide.Buy;
+    private OrderType orderType = OrderType.Market;
+    private int quantity = 0;
+    private decimal? limitPrice;
+    private CreateOrderRequest orderRequest = new(0, OrderSide.Buy, OrderType.Market, 0, null);
+
+    // Task 10.3: 成本預估狀態
+    private TradingCost? costEstimation;
+    private decimal estimatedAmount;
+    private decimal totalCostWithFees;
+
+    // Task 10.4: 提交狀態
+    private bool isSubmitting = false;
+    private bool isMarketOpen;
+    private string? successMessage;
+    private string? errorMessage;
+
+    protected override void OnInitialized()
+    {
+        isMarketOpen = MarketHoursService.IsMarketOpen();
+    }
+
+    #region Task 10.1: 股票搜尋與選擇
+
+    private async Task SearchStocks()
+    {
+        ClearMessages();
+        isSearching = true;
+
+        try
+        {
+            searchResults = (await StockService.SearchStocksAsync(searchKeyword)).ToList();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "搜尋失敗,請稍後再試";
+            Console.Error.WriteLine($"SearchStocks error: {ex.Message}");
+        }
+        finally
+        {
+            isSearching = false;
+        }
+    }
+
+    private void SelectStock(Stock stock)
+    {
+        selectedStock = stock;
+        ClearMessages();
+
+        // 重置下單表單
+        quantity = 0;
+        limitPrice = stock.CurrentPrice;
+        costEstimation = null;
+    }
+
+    private string GetMarketTypeName(MarketType market)
+    {
+        return market switch
+        {
+            MarketType.Listed => "上市",
+            MarketType.OverTheCounter => "上櫃",
+            _ => ""
+        };
+    }
+
+    #endregion
+
+    #region Task 10.3: 交易成本預估
+
+    private void CalculateCostEstimation()
+    {
+        if (selectedStock == null || quantity <= 0)
+        {
+            costEstimation = null;
+            return;
+        }
+
+        // 計算預估成交金額
+        decimal price = orderType == OrderType.Market
+            ? selectedStock.CurrentPrice
+            : (limitPrice ?? selectedStock.CurrentPrice);
+
+        estimatedAmount = price * quantity;
+
+        // 計算交易成本
+        var side = orderSide == OrderSide.Buy ? TradeSide.Buy : TradeSide.Sell;
+        costEstimation = CostService.CalculateTotalCost(estimatedAmount, side, 0.6m);
+
+        // 計算總成本
+        if (orderSide == OrderSide.Buy)
+        {
+            // 買入: 成交金額 + 手續費
+            totalCostWithFees = estimatedAmount + costEstimation.Commission;
+        }
+        else
+        {
+            // 賣出: 成交金額 - 手續費 - 交易稅
+            totalCostWithFees = estimatedAmount - costEstimation.TotalCost;
+        }
+    }
+
+    #endregion
+
+    #region Task 10.4: 下單確認與提交
+
+    private bool IsOrderValid()
+    {
+        if (selectedStock == null) return false;
+        if (quantity <= 0) return false;
+        if (orderType == OrderType.Limit && (limitPrice == null || limitPrice <= 0)) return false;
+
+        return true;
+    }
+
+    private async Task HandleOrderSubmit()
+    {
+        if (!IsOrderValid())
+        {
+            errorMessage = "請填寫完整的下單資訊";
+            return;
+        }
+
+        ClearMessages();
+        isSubmitting = true;
+
+        try
+        {
+            var request = new CreateOrderRequest(
+                StockId: selectedStock!.Id,
+                Side: orderSide,
+                Type: orderType,
+                Quantity: quantity,
+                LimitPrice: orderType == OrderType.Limit ? limitPrice : null
+            );
+
+            var result = await TradingService.CreateOrderAsync(request);
+
+            if (result.IsSuccess)
+            {
+                successMessage = $"下單成功! 訂單編號: {result.Value!.Id}";
+
+                if (!isMarketOpen)
+                {
+                    successMessage += " (休市時段,訂單將於開盤後處理)";
+                }
+
+                ClearOrder();
+            }
+            else
+            {
+                errorMessage = GetErrorMessage(result.Error!.Value);
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "下單失敗,請稍後再試";
+            Console.Error.WriteLine($"HandleOrderSubmit error: {ex.Message}");
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private string GetErrorMessage(TradingError error)
+    {
+        return error switch
+        {
+            TradingError.InvalidQuantity => "請輸入有效的交易數量",
+            TradingError.InsufficientHoldings => "賣出數量不可超過持有股數",
+            TradingError.InvalidStock => "查無此股票代號",
+            TradingError.InvalidLimitPrice => "限價單必須指定價格",
+            TradingError.OrderNotFound => "找不到訂單",
+            TradingError.OrderNotCancellable => "訂單無法取消",
+            TradingError.DuplicateOrder => "請勿重複提交訂單",
+            TradingError.ExceedsTradeLimit => "單筆交易金額超過上限,請確認後再試",
+            _ => "下單失敗,請稍後再試"
+        };
+    }
+
+    private void ClearOrder()
+    {
+        quantity = 0;
+        limitPrice = selectedStock?.CurrentPrice;
+        costEstimation = null;
+        orderSide = OrderSide.Buy;
+        orderType = OrderType.Market;
+    }
+
+    #endregion
+
+    private void ClearMessages()
+    {
+        errorMessage = null;
+        successMessage = null;
+    }
+}
