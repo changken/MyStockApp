@@ -1,0 +1,428 @@
+@page "/orders"
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using MyStockApp.Data
+@using MyStockApp.Data.Models
+@using MyStockApp.Services
+@inject ITradingService TradingService
+@implements IDisposable
+
+<PageTitle>訂單管理</PageTitle>
+
+<h1>訂單管理</h1>
+
+@* 成功訊息 *@
+@if (!string.IsNullOrEmpty(successMessage))
+{
+    <div class="alert alert-success alert-dismissible fade show" role="alert">
+        @successMessage
+        <button type="button" class="btn-close" @onclick="ClearMessages" aria-label="Close"></button>
+    </div>
+}
+
+@* 錯誤訊息 *@
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        @errorMessage
+        <button type="button" class="btn-close" @onclick="ClearMessages" aria-label="Close"></button>
+    </div>
+}
+
+@* Task 11.1 & 11.3: 訂單清單與篩選 *@
+<div class="card mb-4">
+    <div class="card-header">
+        <div class="row align-items-center">
+            <div class="col-md-8">
+                <h5 class="mb-0">訂單列表</h5>
+            </div>
+            <div class="col-md-4">
+                <button type="button" class="btn btn-sm btn-outline-primary float-end" @onclick="RefreshOrders">
+                    <i class="bi bi-arrow-clockwise"></i> 刷新
+                </button>
+            </div>
+        </div>
+    </div>
+    <div class="card-body">
+        @* 狀態篩選按鈕群組 *@
+        <div class="btn-group mb-3 w-100" role="group">
+            <input type="radio" class="btn-check" name="statusFilter" id="filterAll"
+                   checked="@(selectedStatus == null)"
+                   @onchange="() => FilterByStatus(null)" />
+            <label class="btn btn-outline-primary" for="filterAll">
+                全部 (@GetOrderCount(null))
+            </label>
+
+            <input type="radio" class="btn-check" name="statusFilter" id="filterPending"
+                   checked="@(selectedStatus == OrderStatus.Pending)"
+                   @onchange="() => FilterByStatus(OrderStatus.Pending)" />
+            <label class="btn btn-outline-warning" for="filterPending">
+                待成交 (@GetOrderCount(OrderStatus.Pending))
+            </label>
+
+            <input type="radio" class="btn-check" name="statusFilter" id="filterExecuted"
+                   checked="@(selectedStatus == OrderStatus.Executed)"
+                   @onchange="() => FilterByStatus(OrderStatus.Executed)" />
+            <label class="btn btn-outline-success" for="filterExecuted">
+                已成交 (@GetOrderCount(OrderStatus.Executed))
+            </label>
+
+            <input type="radio" class="btn-check" name="statusFilter" id="filterCancelled"
+                   checked="@(selectedStatus == OrderStatus.Cancelled)"
+                   @onchange="() => FilterByStatus(OrderStatus.Cancelled)" />
+            <label class="btn btn-outline-secondary" for="filterCancelled">
+                已取消 (@GetOrderCount(OrderStatus.Cancelled))
+            </label>
+        </div>
+
+        @* 載入指示器 *@
+        @if (isLoading)
+        {
+            <div class="d-flex justify-content-center my-4">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">載入中...</span>
+                </div>
+            </div>
+        }
+        else if (filteredOrders == null || filteredOrders.Count == 0)
+        {
+            <div class="alert alert-info" role="alert">
+                目前無訂單
+            </div>
+        }
+        else
+        {
+            @* 訂單清單表格 *@
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th>訂單編號</th>
+                            <th>股票</th>
+                            <th>方向</th>
+                            <th>類型</th>
+                            <th>數量</th>
+                            <th>價格</th>
+                            <th>狀態</th>
+                            <th>建立時間</th>
+                            <th style="width: 100px;">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var order in filteredOrders)
+                        {
+                            <tr>
+                                <td><span class="badge bg-secondary">#@order.Id</span></td>
+                                <td>
+                                    <strong>@order.Stock?.Symbol</strong>
+                                    <br />
+                                    <small class="text-muted">@order.Stock?.Name</small>
+                                </td>
+                                <td>
+                                    <span class="badge @GetSideBadgeClass(order.Side)">
+                                        @GetSideName(order.Side)
+                                    </span>
+                                </td>
+                                <td>@GetTypeName(order.Type)</td>
+                                <td>@order.Quantity.ToString("N0")</td>
+                                <td>$@order.Price.ToString("N2")</td>
+                                <td>
+                                    <span class="badge @GetStatusBadgeClass(order.Status)">
+                                        @GetStatusName(order.Status)
+                                    </span>
+                                </td>
+                                <td>
+                                    <small>@order.CreatedAt.ToLocalTime().ToString("yyyy/MM/dd HH:mm")</small>
+                                </td>
+                                <td>
+                                    @* Task 11.2: 取消按鈕 *@
+                                    @if (order.Status == OrderStatus.Pending)
+                                    {
+                                        <button class="btn btn-sm btn-outline-danger"
+                                                @onclick="() => ShowCancelConfirmation(order)"
+                                                disabled="@isCancelling">
+                                            <i class="bi bi-x-circle"></i> 取消
+                                        </button>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn btn-sm btn-outline-secondary" disabled>
+                                            <i class="bi bi-dash-circle"></i> 不可取消
+                                        </button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
+@* Task 11.2: 取消確認對話框 *@
+@if (showCancelModal && orderToCancel != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">確認取消訂單</h5>
+                    <button type="button" class="btn-close" @onclick="CloseCancelModal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p>確定要取消以下訂單嗎？</p>
+                    <div class="card">
+                        <div class="card-body">
+                            <p class="mb-1"><strong>訂單編號：</strong>#@orderToCancel.Id</p>
+                            <p class="mb-1"><strong>股票：</strong>@orderToCancel.Stock?.Symbol - @orderToCancel.Stock?.Name</p>
+                            <p class="mb-1"><strong>方向：</strong>@GetSideName(orderToCancel.Side)</p>
+                            <p class="mb-1"><strong>類型：</strong>@GetTypeName(orderToCancel.Type)</p>
+                            <p class="mb-1"><strong>數量：</strong>@orderToCancel.Quantity 股</p>
+                            <p class="mb-0"><strong>價格：</strong>$@orderToCancel.Price.ToString("N2")</p>
+                        </div>
+                    </div>
+                    <div class="alert alert-warning mt-3 mb-0" role="alert">
+                        <i class="bi bi-exclamation-triangle-fill"></i>
+                        取消後將無法恢復，請確認後再執行
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseCancelModal" disabled="@isCancelling">
+                        返回
+                    </button>
+                    <button type="button" class="btn btn-danger" @onclick="ConfirmCancelOrder" disabled="@isCancelling">
+                        @if (isCancelling)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                        }
+                        確認取消
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    // Task 11.1: 訂單清單狀態
+    private List<Order>? allOrders;
+    private List<Order>? filteredOrders;
+    private OrderStatus? selectedStatus = null;
+    private bool isLoading = true;
+
+    // Task 11.2: 取消訂單狀態
+    private Order? orderToCancel;
+    private bool showCancelModal = false;
+    private bool isCancelling = false;
+
+    // Task 11.3: 即時更新
+    private System.Threading.Timer? refreshTimer;
+
+    // 訊息狀態
+    private string? successMessage;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadOrdersAsync();
+
+        // Task 11.3: 設定自動刷新（每 30 秒）
+        refreshTimer = new System.Threading.Timer(async _ =>
+        {
+            await InvokeAsync(async () =>
+            {
+                await RefreshOrders();
+                StateHasChanged();
+            });
+        }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+    }
+
+    #region Task 11.1: 訂單清單顯示
+
+    private async Task LoadOrdersAsync()
+    {
+        isLoading = true;
+        ClearMessages();
+
+        try
+        {
+            allOrders = (await TradingService.GetOrdersAsync()).ToList();
+            ApplyFilter();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "載入訂單失敗，請稍後再試";
+            Console.Error.WriteLine($"LoadOrdersAsync error: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void FilterByStatus(OrderStatus? status)
+    {
+        selectedStatus = status;
+        ApplyFilter();
+    }
+
+    private void ApplyFilter()
+    {
+        if (allOrders == null)
+        {
+            filteredOrders = null;
+            return;
+        }
+
+        filteredOrders = selectedStatus == null
+            ? allOrders.OrderByDescending(o => o.CreatedAt).ToList()
+            : allOrders.Where(o => o.Status == selectedStatus)
+                       .OrderByDescending(o => o.CreatedAt)
+                       .ToList();
+    }
+
+    private int GetOrderCount(OrderStatus? status)
+    {
+        if (allOrders == null) return 0;
+
+        return status == null
+            ? allOrders.Count
+            : allOrders.Count(o => o.Status == status);
+    }
+
+    private async Task RefreshOrders()
+    {
+        await LoadOrdersAsync();
+    }
+
+    #endregion
+
+    #region Task 11.2: 訂單取消操作
+
+    private void ShowCancelConfirmation(Order order)
+    {
+        ClearMessages();
+        orderToCancel = order;
+        showCancelModal = true;
+    }
+
+    private void CloseCancelModal()
+    {
+        showCancelModal = false;
+        orderToCancel = null;
+    }
+
+    private async Task ConfirmCancelOrder()
+    {
+        if (orderToCancel == null) return;
+
+        ClearMessages();
+        isCancelling = true;
+
+        try
+        {
+            var result = await TradingService.CancelOrderAsync(orderToCancel.Id);
+
+            if (result.IsSuccess)
+            {
+                successMessage = $"訂單 #{orderToCancel.Id} 已成功取消";
+                showCancelModal = false;
+                orderToCancel = null;
+                await LoadOrdersAsync();
+            }
+            else
+            {
+                errorMessage = GetErrorMessage(result.Error!.Value);
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "取消訂單失敗，請稍後再試";
+            Console.Error.WriteLine($"ConfirmCancelOrder error: {ex.Message}");
+        }
+        finally
+        {
+            isCancelling = false;
+        }
+    }
+
+    private string GetErrorMessage(TradingError error)
+    {
+        return error switch
+        {
+            TradingError.OrderNotFound => "找不到訂單",
+            TradingError.OrderNotCancellable => "訂單無法取消（已成交或已取消）",
+            _ => "取消訂單失敗，請稍後再試"
+        };
+    }
+
+    #endregion
+
+    #region UI Helper Methods
+
+    private string GetSideName(OrderSide side)
+    {
+        return side switch
+        {
+            OrderSide.Buy => "買入",
+            OrderSide.Sell => "賣出",
+            _ => ""
+        };
+    }
+
+    private string GetSideBadgeClass(OrderSide side)
+    {
+        return side switch
+        {
+            OrderSide.Buy => "bg-success",
+            OrderSide.Sell => "bg-danger",
+            _ => "bg-secondary"
+        };
+    }
+
+    private string GetTypeName(OrderType type)
+    {
+        return type switch
+        {
+            OrderType.Market => "市價單",
+            OrderType.Limit => "限價單",
+            _ => ""
+        };
+    }
+
+    private string GetStatusName(OrderStatus status)
+    {
+        return status switch
+        {
+            OrderStatus.Pending => "待成交",
+            OrderStatus.Executed => "已成交",
+            OrderStatus.Cancelled => "已取消",
+            _ => ""
+        };
+    }
+
+    private string GetStatusBadgeClass(OrderStatus status)
+    {
+        return status switch
+        {
+            OrderStatus.Pending => "bg-warning text-dark",
+            OrderStatus.Executed => "bg-success",
+            OrderStatus.Cancelled => "bg-secondary",
+            _ => "bg-light text-dark"
+        };
+    }
+
+    private void ClearMessages()
+    {
+        errorMessage = null;
+        successMessage = null;
+    }
+
+    #endregion
+
+    public void Dispose()
+    {
+        refreshTimer?.Dispose();
+    }
+}
