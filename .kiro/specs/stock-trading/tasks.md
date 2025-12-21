@@ -186,7 +186,7 @@
   - _Requirements: 5.4, 5.5_
 
 ## Task 7: CSV 匯出服務
-- [ ] 7.1 (P) 建立 JavaScript 下載輔助腳本
+- [x] 7.1 (P) 建立 JavaScript 下載輔助腳本
   - 新增檔案：`MyStockApp/wwwroot/js/fileDownload.js`
   - 建立檔案下載觸發函式
   - 支援 Base64 Data URI 格式
@@ -194,7 +194,7 @@
   - 在 `MyStockApp/Components/App.razor` 引入腳本（例如新增 `<script src="@Assets["js/fileDownload.js"]"></script>`）
   - _Requirements: 4.4_
 
-- [ ] 7.2 實作交易紀錄 CSV 產生與匯出
+- [x] 7.2 實作交易紀錄 CSV 產生與匯出
   - 使用 CsvHelper 產生 CSV 內容
   - 包含完整交易資訊：日期、代號、類型、數量、價格、手續費、交易稅、淨金額
   - 透過 JavaScript Interop 觸發瀏覽器下載
