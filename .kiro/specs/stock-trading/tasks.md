@@ -210,7 +210,7 @@
   - _Requirements: 4.1, 4.2, 4.3, 4.5_
 
 ## Task 9: 服務註冊與整合
-- [ ] 9. 註冊所有服務至依賴注入容器
+- [x] 9. 註冊所有服務至依賴注入容器
   - 註冊 TradingService、TradingCostService 為 Scoped
   - 註冊 PortfolioService、StockService、AuditService 為 Scoped
   - 註冊 CsvExportService 為 Scoped
