@@ -1,0 +1,256 @@
+@page "/portfolio"
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using MyStockApp.Data
+@using MyStockApp.Data.Models
+@using MyStockApp.Services
+@inject IPortfolioService PortfolioService
+@implements IDisposable
+
+<PageTitle>持股部位</PageTitle>
+
+<h1>持股部位</h1>
+
+@* 錯誤訊息 *@
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        @errorMessage
+        <button type="button" class="btn-close" @onclick="ClearMessages" aria-label="Close"></button>
+    </div>
+}
+
+@* Task 12.2: 投資組合摘要 *@
+@if (summary != null)
+{
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card border-primary">
+                <div class="card-body text-center">
+                    <small class="text-muted">總市值</small>
+                    <h4 class="text-primary mb-0">$@summary.TotalMarketValue.ToString("N0")</h4>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-secondary">
+                <div class="card-body text-center">
+                    <small class="text-muted">總成本</small>
+                    <h4 class="text-secondary mb-0">$@summary.TotalCost.ToString("N0")</h4>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card @GetBorderClass(summary.TotalUnrealizedPnL + summary.TotalRealizedPnL)">
+                <div class="card-body text-center">
+                    <small class="text-muted">總損益</small>
+                    <h4 class="@GetTextClass(summary.TotalUnrealizedPnL + summary.TotalRealizedPnL) mb-0">
+                        @GetPnLPrefix(summary.TotalUnrealizedPnL + summary.TotalRealizedPnL)@((summary.TotalUnrealizedPnL + summary.TotalRealizedPnL).ToString("N0"))
+                    </h4>
+                    <div class="small">
+                        <span class="text-muted">未實現:</span>
+                        <span class="@GetTextClass(summary.TotalUnrealizedPnL)">
+                            @GetPnLPrefix(summary.TotalUnrealizedPnL)@summary.TotalUnrealizedPnL.ToString("N0")
+                        </span>
+                        <span class="text-muted ms-2">已實現:</span>
+                        <span class="@GetTextClass(summary.TotalRealizedPnL)">
+                            @GetPnLPrefix(summary.TotalRealizedPnL)@summary.TotalRealizedPnL.ToString("N0")
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card @GetBorderClass(summary.TotalReturnRate)">
+                <div class="card-body text-center">
+                    <small class="text-muted">總報酬率</small>
+                    <h4 class="@GetTextClass(summary.TotalReturnRate) mb-0">
+                        @GetPnLPrefix(summary.TotalReturnRate)@summary.TotalReturnRate.ToString("N2")%
+                    </h4>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* Task 12.1 & 12.3: 持股清單 *@
+<div class="card">
+    <div class="card-header">
+        <div class="row align-items-center">
+            <div class="col-md-8">
+                <h5 class="mb-0">持股明細</h5>
+            </div>
+            <div class="col-md-4">
+                <button type="button" class="btn btn-sm btn-outline-primary float-end" @onclick="RefreshPortfolio">
+                    <i class="bi bi-arrow-clockwise"></i> 刷新
+                </button>
+            </div>
+        </div>
+    </div>
+    <div class="card-body">
+        @* 載入指示器 *@
+        @if (isLoading)
+        {
+            <div class="d-flex justify-content-center my-4">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">載入中...</span>
+                </div>
+            </div>
+        }
+        else if (portfolioItems == null || portfolioItems.Count == 0)
+        {
+            <div class="alert alert-info" role="alert">
+                目前無持股
+            </div>
+        }
+        else
+        {
+            @* 持股清單表格 *@
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th>股票</th>
+                            <th class="text-end">持有數量</th>
+                            <th class="text-end">平均成本</th>
+                            <th class="text-end">當前價格</th>
+                            <th class="text-end">市值</th>
+                            <th class="text-end">未實現損益</th>
+                            <th class="text-end">報酬率</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var item in portfolioItems)
+                        {
+                            <tr>
+                                <td>
+                                    <strong>@item.StockSymbol</strong>
+                                    <br />
+                                    <small class="text-muted">@item.StockName</small>
+                                </td>
+                                <td class="text-end">@item.Quantity.ToString("N0")</td>
+                                <td class="text-end">$@item.AverageCost.ToString("N2")</td>
+                                <td class="text-end">$@item.CurrentPrice.ToString("N2")</td>
+                                <td class="text-end fw-bold">$@item.MarketValue.ToString("N0")</td>
+                                <td class="text-end @GetTextClass(item.UnrealizedPnL)">
+                                    @GetPnLPrefix(item.UnrealizedPnL)@Math.Abs(item.UnrealizedPnL).ToString("N0")
+                                </td>
+                                <td class="text-end @GetTextClass(item.ReturnRate)">
+                                    <strong>@GetPnLPrefix(item.ReturnRate)@Math.Abs(item.ReturnRate).ToString("N2")%</strong>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot class="table-secondary">
+                        <tr class="fw-bold">
+                            <td colspan="4" class="text-end">合計</td>
+                            <td class="text-end">$@portfolioItems.Sum(p => p.MarketValue).ToString("N0")</td>
+                            <td class="text-end @GetTextClass(portfolioItems.Sum(p => p.UnrealizedPnL))">
+                                @GetPnLPrefix(portfolioItems.Sum(p => p.UnrealizedPnL))@Math.Abs(portfolioItems.Sum(p => p.UnrealizedPnL)).ToString("N0")
+                            </td>
+                            <td></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    // Task 12.1: 持股清單狀態
+    private List<PortfolioItem>? portfolioItems;
+    private bool isLoading = true;
+
+    // Task 12.2: 投資組合摘要
+    private PortfolioSummary? summary;
+
+    // Task 12.3: 即時更新
+    private System.Threading.Timer? refreshTimer;
+
+    // 訊息狀態
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadPortfolioAsync();
+
+        // Task 12.3: 設定自動刷新（每 30 秒）
+        refreshTimer = new System.Threading.Timer(async _ =>
+        {
+            await InvokeAsync(async () =>
+            {
+                await RefreshPortfolio();
+                StateHasChanged();
+            });
+        }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+    }
+
+    #region Task 12.1 & 12.2: 載入持股與摘要
+
+    private async Task LoadPortfolioAsync()
+    {
+        isLoading = true;
+        ClearMessages();
+
+        try
+        {
+            portfolioItems = (await PortfolioService.GetPortfolioAsync()).ToList();
+            summary = await PortfolioService.GetPortfolioSummaryAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "載入持股資料失敗，請稍後再試";
+            Console.Error.WriteLine($"LoadPortfolioAsync error: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    #endregion
+
+    #region Task 12.3: 即時更新
+
+    private async Task RefreshPortfolio()
+    {
+        await LoadPortfolioAsync();
+    }
+
+    #endregion
+
+    #region UI Helper Methods
+
+    private string GetTextClass(decimal value)
+    {
+        if (value > 0) return "text-success";
+        if (value < 0) return "text-danger";
+        return "text-muted";
+    }
+
+    private string GetBorderClass(decimal value)
+    {
+        if (value > 0) return "border-success";
+        if (value < 0) return "border-danger";
+        return "border-secondary";
+    }
+
+    private string GetPnLPrefix(decimal value)
+    {
+        if (value > 0) return "+";
+        return "";
+    }
+
+    private void ClearMessages()
+    {
+        errorMessage = null;
+    }
+
+    #endregion
+
+    public void Dispose()
+    {
+        refreshTimer?.Dispose();
+    }
+}
