@@ -1,0 +1,378 @@
+@page "/stock-search"
+@rendermode InteractiveServer
+@inject IStockService StockService
+
+<PageTitle>股票查詢</PageTitle>
+
+<h3 class="mb-4">股票查詢</h3>
+
+@* Task 16.1: 搜尋與篩選功能 *@
+<div class="card mb-4">
+    <div class="card-body">
+        <div class="row g-3">
+            <div class="col-md-4">
+                <label for="keyword" class="form-label">股票代號/名稱</label>
+                <input type="text" id="keyword" class="form-control"
+                       @bind="keyword" placeholder="例如：2330 或 台積電" />
+            </div>
+            <div class="col-md-3">
+                <label for="market" class="form-label">市場別</label>
+                <select id="market" class="form-select" @bind="selectedMarket">
+                    <option value="">全部</option>
+                    <option value="@((int)MarketType.Listed)">上市</option>
+                    <option value="@((int)MarketType.OTC)">上櫃</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label for="industry" class="form-label">產業別</label>
+                <select id="industry" class="form-select" @bind="selectedIndustry">
+                    <option value="">全部</option>
+                    <option value="半導體">半導體</option>
+                    <option value="電子">電子</option>
+                    <option value="金融">金融</option>
+                    <option value="傳產">傳產</option>
+                </select>
+            </div>
+            <div class="col-md-2 d-flex align-items-end">
+                <button type="button" class="btn btn-primary w-100" @onclick="SearchStocks">
+                    <i class="bi bi-search"></i> 搜尋
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (isLoading)
+{
+    <div class="text-center">
+        <div class="spinner-border" role="status">
+            <span class="visually-hidden">載入中...</span>
+        </div>
+    </div>
+}
+else if (searchResults != null)
+{
+    @if (searchResults.Count == 0)
+    {
+        <div class="alert alert-info">
+            查無股票，請嘗試其他搜尋條件
+        </div>
+    }
+    else
+    {
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">搜尋結果（共 @searchResults.Count 筆）</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead class="table-light">
+                            <tr>
+                                <th>代號</th>
+                                <th>名稱</th>
+                                <th>市場</th>
+                                <th>產業</th>
+                                <th class="text-end">當前價格</th>
+                                <th class="text-end">成交量</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var stock in searchResults)
+                            {
+                                <tr>
+                                    <td><strong>@stock.Symbol</strong></td>
+                                    <td>@stock.Name</td>
+                                    <td>@GetMarketName(stock.Market)</td>
+                                    <td>@stock.Industry</td>
+                                    <td class="text-end">$@stock.CurrentPrice.ToString("N2")</td>
+                                    <td class="text-end">@stock.Volume.ToString("N0")</td>
+                                    <td>
+                                        <button type="button" class="btn btn-sm btn-primary"
+                                                @onclick="() => SelectStock(stock.Id)">
+                                            選取
+                                        </button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+@* Task 16.1: 選取股票後顯示即時報價 *@
+@if (selectedStock != null)
+{
+    <div class="card mb-4">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0">@selectedStock.Symbol - @selectedStock.Name</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <h6 class="text-muted">即時報價</h6>
+                    <table class="table table-borderless">
+                        <tbody>
+                            <tr>
+                                <td class="fw-bold">當前價格</td>
+                                <td class="text-end"><h4 class="mb-0 text-primary">$@selectedStock.CurrentPrice.ToString("N2")</h4></td>
+                            </tr>
+                            <tr>
+                                <td>開盤價</td>
+                                <td class="text-end">$@selectedStock.OpenPrice.ToString("N2")</td>
+                            </tr>
+                            <tr>
+                                <td>最高價</td>
+                                <td class="text-end text-danger">$@selectedStock.HighPrice.ToString("N2")</td>
+                            </tr>
+                            <tr>
+                                <td>最低價</td>
+                                <td class="text-end text-success">$@selectedStock.LowPrice.ToString("N2")</td>
+                            </tr>
+                            <tr>
+                                <td>成交量</td>
+                                <td class="text-end">@selectedStock.Volume.ToString("N0")</td>
+                            </tr>
+                            <tr>
+                                <td>更新時間</td>
+                                <td class="text-end">@selectedStock.UpdatedAt.ToLocalTime().ToString("yyyy/MM/dd HH:mm:ss")</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="col-md-6">
+                    <h6 class="text-muted">股票資訊</h6>
+                    <table class="table table-borderless">
+                        <tbody>
+                            <tr>
+                                <td class="fw-bold">股票代號</td>
+                                <td>@selectedStock.Symbol</td>
+                            </tr>
+                            <tr>
+                                <td class="fw-bold">股票名稱</td>
+                                <td>@selectedStock.Name</td>
+                            </tr>
+                            <tr>
+                                <td class="fw-bold">市場別</td>
+                                <td>@GetMarketName(selectedStock.Market)</td>
+                            </tr>
+                            <tr>
+                                <td class="fw-bold">產業類別</td>
+                                <td>@selectedStock.Industry</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            @* Task 16.2: 歷史價格查詢 *@
+            <hr />
+            <h6 class="text-muted mb-3">歷史價格查詢</h6>
+            <div class="row g-3 mb-3">
+                <div class="col-md-4">
+                    <label for="fromDate" class="form-label">開始日期</label>
+                    <input type="date" id="fromDate" class="form-control" @bind="fromDate" />
+                </div>
+                <div class="col-md-4">
+                    <label for="toDate" class="form-label">結束日期</label>
+                    <input type="date" id="toDate" class="form-control" @bind="toDate" />
+                </div>
+                <div class="col-md-4 d-flex align-items-end">
+                    <button type="button" class="btn btn-secondary w-100" @onclick="LoadPriceHistory">
+                        <i class="bi bi-clock-history"></i> 查詢歷史
+                    </button>
+                </div>
+            </div>
+
+            @if (priceHistory != null && priceHistory.Count > 0)
+            {
+                <div class="row mb-3">
+                    <div class="col-12">
+                        <h6 class="text-muted">統計資訊</h6>
+                        @if (statistics != null)
+                        {
+                            <div class="row g-2">
+                                <div class="col-md-2">
+                                    <div class="card text-center">
+                                        <div class="card-body py-2">
+                                            <small class="text-muted">最高價</small>
+                                            <div class="fw-bold text-danger">$@statistics.HighestPrice.ToString("N2")</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-2">
+                                    <div class="card text-center">
+                                        <div class="card-body py-2">
+                                            <small class="text-muted">最低價</small>
+                                            <div class="fw-bold text-success">$@statistics.LowestPrice.ToString("N2")</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-2">
+                                    <div class="card text-center">
+                                        <div class="card-body py-2">
+                                            <small class="text-muted">平均價</small>
+                                            <div class="fw-bold">$@statistics.AveragePrice.ToString("N2")</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="card text-center">
+                                        <div class="card-body py-2">
+                                            <small class="text-muted">漲跌</small>
+                                            <div class="fw-bold @GetPriceChangeClass(statistics.PriceChange)">
+                                                @GetPriceChangePrefix(statistics.PriceChange)$@Math.Abs(statistics.PriceChange).ToString("N2")
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="card text-center">
+                                        <div class="card-body py-2">
+                                            <small class="text-muted">漲跌幅</small>
+                                            <div class="fw-bold @GetPriceChangeClass(statistics.ChangePercent)">
+                                                @GetPriceChangePrefix(statistics.ChangePercent)@Math.Abs(statistics.ChangePercent).ToString("N2")%
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                </div>
+
+                <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                    <table class="table table-sm table-hover">
+                        <thead class="table-light" style="position: sticky; top: 0; z-index: 1;">
+                            <tr>
+                                <th>日期</th>
+                                <th class="text-end">開盤</th>
+                                <th class="text-end">最高</th>
+                                <th class="text-end">最低</th>
+                                <th class="text-end">收盤</th>
+                                <th class="text-end">成交量</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var history in priceHistory.OrderByDescending(h => h.Date))
+                            {
+                                <tr>
+                                    <td>@history.Date.ToString("yyyy/MM/dd")</td>
+                                    <td class="text-end">$@history.OpenPrice.ToString("N2")</td>
+                                    <td class="text-end text-danger">$@history.HighPrice.ToString("N2")</td>
+                                    <td class="text-end text-success">$@history.LowPrice.ToString("N2")</td>
+                                    <td class="text-end fw-bold">$@history.ClosePrice.ToString("N2")</td>
+                                    <td class="text-end">@history.Volume.ToString("N0")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            else if (priceHistory != null && priceHistory.Count == 0)
+            {
+                <div class="alert alert-info">
+                    查無歷史價格資料
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    // Task 16.1: 搜尋與篩選
+    private string? keyword;
+    private string? selectedMarket;
+    private string? selectedIndustry;
+    private List<Stock>? searchResults;
+    private Stock? selectedStock;
+    private bool isLoading = false;
+
+    // Task 16.2: 歷史價格查詢
+    private DateOnly? fromDate;
+    private DateOnly? toDate;
+    private List<StockPriceHistory>? priceHistory;
+    private PriceStatistics? statistics;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // 預設載入所有股票
+        await SearchStocks();
+
+        // 設定預設日期範圍（最近 30 天）
+        toDate = DateOnly.FromDateTime(DateTime.Now);
+        fromDate = toDate.Value.AddDays(-30);
+    }
+
+    private async Task SearchStocks()
+    {
+        isLoading = true;
+        try
+        {
+            MarketType? market = null;
+            if (!string.IsNullOrEmpty(selectedMarket) && int.TryParse(selectedMarket, out var marketValue))
+            {
+                market = (MarketType)marketValue;
+            }
+
+            var industry = string.IsNullOrEmpty(selectedIndustry) ? null : selectedIndustry;
+            var searchKeyword = string.IsNullOrWhiteSpace(keyword) ? null : keyword.Trim();
+
+            searchResults = (await StockService.SearchStocksAsync(searchKeyword, market, industry)).ToList();
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task SelectStock(int stockId)
+    {
+        selectedStock = await StockService.GetStockAsync(stockId);
+        priceHistory = null; // 清空歷史資料
+        statistics = null;
+    }
+
+    private async Task LoadPriceHistory()
+    {
+        if (selectedStock == null || fromDate == null || toDate == null)
+        {
+            return;
+        }
+
+        priceHistory = (await StockService.GetPriceHistoryAsync(selectedStock.Id, fromDate.Value, toDate.Value)).ToList();
+
+        if (priceHistory.Count > 0)
+        {
+            statistics = await StockService.CalculatePriceStatisticsAsync(selectedStock.Id, fromDate.Value, toDate.Value);
+        }
+    }
+
+    private string GetMarketName(MarketType market)
+    {
+        return market switch
+        {
+            MarketType.Listed => "上市",
+            MarketType.OTC => "上櫃",
+            _ => "未知"
+        };
+    }
+
+    private string GetPriceChangeClass(decimal value)
+    {
+        if (value > 0) return "text-danger";
+        if (value < 0) return "text-success";
+        return "text-muted";
+    }
+
+    private string GetPriceChangePrefix(decimal value)
+    {
+        if (value > 0) return "+";
+        if (value < 0) return "";
+        return "";
+    }
+}
