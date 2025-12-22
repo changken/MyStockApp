@@ -1,0 +1,312 @@
+@page "/trade-history"
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using MyStockApp.Data
+@using MyStockApp.Data.Models
+@using MyStockApp.Services
+@inject ITradingService TradingService
+@inject ICsvExportService CsvExportService
+
+<PageTitle>交易紀錄</PageTitle>
+
+<h1>交易紀錄</h1>
+
+@* 成功訊息 *@
+@if (!string.IsNullOrEmpty(successMessage))
+{
+    <div class="alert alert-success alert-dismissible fade show" role="alert">
+        @successMessage
+        <button type="button" class="btn-close" @onclick="ClearMessages" aria-label="Close"></button>
+    </div>
+}
+
+@* 錯誤訊息 *@
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        @errorMessage
+        <button type="button" class="btn-close" @onclick="ClearMessages" aria-label="Close"></button>
+    </div>
+}
+
+@* Task 13.2: 篩選與搜尋功能 *@
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0">篩選條件</h5>
+    </div>
+    <div class="card-body">
+        <div class="row g-3">
+            <div class="col-md-3">
+                <label for="stockSymbol" class="form-label">股票代號</label>
+                <input type="text" id="stockSymbol" class="form-control"
+                       @bind="stockSymbol"
+                       placeholder="例如：2330" />
+            </div>
+            <div class="col-md-3">
+                <label for="fromDate" class="form-label">開始日期</label>
+                <input type="date" id="fromDate" class="form-control"
+                       @bind="fromDate" />
+            </div>
+            <div class="col-md-3">
+                <label for="toDate" class="form-label">結束日期</label>
+                <input type="date" id="toDate" class="form-control"
+                       @bind="toDate" />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">&nbsp;</label>
+                <div class="d-grid gap-2">
+                    <button type="button" class="btn btn-primary" @onclick="SearchTrades" disabled="@isSearching">
+                        @if (isSearching)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                        }
+                        <i class="bi bi-search"></i> 搜尋
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@* Task 13.1 & 13.3: 交易紀錄清單與匯出 *@
+<div class="card">
+    <div class="card-header">
+        <div class="row align-items-center">
+            <div class="col-md-8">
+                <h5 class="mb-0">交易明細 (@(trades?.Count ?? 0) 筆)</h5>
+            </div>
+            <div class="col-md-4">
+                @* Task 13.3: CSV 匯出按鈕 *@
+                <button type="button" class="btn btn-sm btn-success float-end"
+                        @onclick="ExportTrades"
+                        disabled="@(isExporting || trades == null || trades.Count == 0)">
+                    @if (isExporting)
+                    {
+                        <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                    }
+                    <i class="bi bi-file-earmark-spreadsheet"></i> 匯出 CSV
+                </button>
+            </div>
+        </div>
+    </div>
+    <div class="card-body">
+        @* 載入指示器 *@
+        @if (isLoading)
+        {
+            <div class="d-flex justify-content-center my-4">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">載入中...</span>
+                </div>
+            </div>
+        }
+        else if (trades == null || trades.Count == 0)
+        {
+            <div class="alert alert-info" role="alert">
+                目前無交易紀錄
+            </div>
+        }
+        else
+        {
+            @* 交易紀錄表格 *@
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th>交易日期</th>
+                            <th>股票代號</th>
+                            <th>交易類型</th>
+                            <th class="text-end">數量</th>
+                            <th class="text-end">成交價格</th>
+                            <th class="text-end">成交金額</th>
+                            <th class="text-end">手續費</th>
+                            <th class="text-end">交易稅</th>
+                            <th class="text-end">淨金額</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var trade in trades)
+                        {
+                            <tr>
+                                <td>@trade.ExecutedAt.ToLocalTime().ToString("yyyy/MM/dd HH:mm")</td>
+                                <td><strong>@trade.StockSymbol</strong></td>
+                                <td>
+                                    <span class="badge @GetSideBadgeClass(trade.Side)">
+                                        @GetSideName(trade.Side)
+                                    </span>
+                                </td>
+                                <td class="text-end">@trade.Quantity.ToString("N0")</td>
+                                <td class="text-end">$@trade.ExecutedPrice.ToString("N2")</td>
+                                <td class="text-end fw-bold">$@trade.TotalAmount.ToString("N0")</td>
+                                <td class="text-end text-warning">$@trade.Commission.ToString("N2")</td>
+                                <td class="text-end text-info">$@trade.TransactionTax.ToString("N2")</td>
+                                <td class="text-end @GetNetAmountClass(trade.Side)">
+                                    <strong>$@trade.NetAmount.ToString("N0")</strong>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot class="table-secondary">
+                        <tr class="fw-bold">
+                            <td colspan="5" class="text-end">合計</td>
+                            <td class="text-end">$@trades.Sum(t => t.TotalAmount).ToString("N0")</td>
+                            <td class="text-end text-warning">$@trades.Sum(t => t.Commission).ToString("N2")</td>
+                            <td class="text-end text-info">$@trades.Sum(t => t.TransactionTax).ToString("N2")</td>
+                            <td class="text-end">$@trades.Sum(t => t.NetAmount).ToString("N0")</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    // Task 13.1: 交易紀錄清單狀態
+    private List<Trade>? trades;
+    private bool isLoading = true;
+
+    // Task 13.2: 篩選與搜尋狀態
+    private string? stockSymbol;
+    private DateTime? fromDate;
+    private DateTime? toDate;
+    private bool isSearching = false;
+
+    // Task 13.3: CSV 匯出狀態
+    private bool isExporting = false;
+
+    // 訊息狀態
+    private string? successMessage;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadTradesAsync();
+    }
+
+    #region Task 13.1: 交易紀錄清單顯示
+
+    private async Task LoadTradesAsync(TradeFilter? filter = null)
+    {
+        isLoading = true;
+        ClearMessages();
+
+        try
+        {
+            var allTrades = await TradingService.GetTradesAsync(filter);
+            trades = allTrades.OrderByDescending(t => t.ExecutedAt).ToList();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "載入交易紀錄失敗，請稍後再試";
+            Console.Error.WriteLine($"LoadTradesAsync error: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    #endregion
+
+    #region Task 13.2: 篩選與搜尋功能
+
+    private async Task SearchTrades()
+    {
+        isSearching = true;
+        ClearMessages();
+
+        try
+        {
+            var filter = new TradeFilter(
+                StockSymbol: string.IsNullOrWhiteSpace(stockSymbol) ? null : stockSymbol.Trim(),
+                FromDate: fromDate.HasValue ? DateTime.SpecifyKind(fromDate.Value, DateTimeKind.Utc) : null,
+                ToDate: toDate.HasValue ? DateTime.SpecifyKind(toDate.Value.AddDays(1).AddSeconds(-1), DateTimeKind.Utc) : null
+            );
+
+            await LoadTradesAsync(filter);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "搜尋失敗，請稍後再試";
+            Console.Error.WriteLine($"SearchTrades error: {ex.Message}");
+        }
+        finally
+        {
+            isSearching = false;
+        }
+    }
+
+    #endregion
+
+    #region Task 13.3: CSV 匯出功能
+
+    private async Task ExportTrades()
+    {
+        if (trades == null || trades.Count == 0)
+        {
+            errorMessage = "目前無交易紀錄可匯出";
+            return;
+        }
+
+        isExporting = true;
+        ClearMessages();
+
+        try
+        {
+            var fileName = $"trades_{DateTime.Now:yyyyMMdd_HHmmss}.csv";
+            await CsvExportService.ExportTradesAsync(trades, fileName);
+            successMessage = $"已成功匯出 {trades.Count} 筆交易紀錄";
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "匯出失敗，請稍後再試";
+            Console.Error.WriteLine($"ExportTrades error: {ex.Message}");
+        }
+        finally
+        {
+            isExporting = false;
+        }
+    }
+
+    #endregion
+
+    #region UI Helper Methods
+
+    private string GetSideName(TradeSide side)
+    {
+        return side switch
+        {
+            TradeSide.Buy => "買入",
+            TradeSide.Sell => "賣出",
+            _ => ""
+        };
+    }
+
+    private string GetSideBadgeClass(TradeSide side)
+    {
+        return side switch
+        {
+            TradeSide.Buy => "bg-success",
+            TradeSide.Sell => "bg-danger",
+            _ => "bg-secondary"
+        };
+    }
+
+    private string GetNetAmountClass(TradeSide side)
+    {
+        return side switch
+        {
+            TradeSide.Buy => "text-danger",
+            TradeSide.Sell => "text-success",
+            _ => ""
+        };
+    }
+
+    private void ClearMessages()
+    {
+        errorMessage = null;
+        successMessage = null;
+    }
+
+    #endregion
+}
